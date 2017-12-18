@@ -1,0 +1,205 @@
+// Project: GSM based Automatic Irrigation Controller 
+// Author: Abhijit Ashok Mapgaonkar
+// Date: 18 DEC 2017
+
+// --------------------------------------------------------------------------------------------------------------------------
+// Definition - Parameter, Variables, Libraries
+// --------------------------------------------------------------------------------------------------------------------------
+// Include Libraries
+  #include <Wire.h>
+  #include <LiquidCrystal_I2C.h>
+  #include <RTClib.h>
+
+// Arduino Pins definition
+  int I_FlowSensor = 0;                          // Input from Flow Sensor - A0 (GPIO 14)
+  int O_WaterPumpRelayControl = 7;               // Output for Water Pump Relay Control - 7 (GPIO 07)
+ 
+// Variables
+  int FlowSensorValue;                           // Stores the flow sensor values
+  int FlowMinRate=<???>                          // Flow Sensor Min. Flow Rate
+  int FlowMaxRate=<???>                          // Flow Sensor Max. Flow Rate
+  int DryRunWaitPeriod=60000                     // Pump Dry Run Delay - 60 Sec.
+  int InitDelay=3600                             // Initialization Delay - 60 Sec.
+  int PumpONTime=300000                          // Pump ON Time - 05 Min.
+  
+// system messages
+const char *str_msg_table[] =
+{   
+  "     MuktaSoft      ",  //Message - 0
+  "  SMART Irrigation  ",  //Message - 1   
+  "    Please wait!    "   //Message - 2
+  "   Mode: Automatic  ",  //Message - 3
+  "     Mode: Manual   ",  //Message - 4
+  "     Pump is ON     ",  //Message - 5
+  "     Pump is OFF    ",  //Message - 6
+  "ALERT: Pump Dry Run ",  //Message - 7 
+  "   Starting Pump    ",  //Message - 8
+  "   Stopping Pump    ",  //Message - 9
+};
+
+// system messages
+const char *str_sch_table[] =
+{   
+  "06",    // 06 Hr
+  "12",    // 12 Hr   
+  "18"     // 18 Hr
+  "00"     // 00 Min.
+  "10"     // 10 Min.  
+};
+
+
+// objects definition
+   RTC_DS1307 RTC;
+   LiquidCrystal_I2C lcd(0x27, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);   // LiquidCrystal_I2C lcd(0x27,20,4);
+
+// --------------------------------------------------------------------------------------------------------------------------
+// System Initialization   
+// --------------------------------------------------------------------------------------------------------------------------
+void setup(){
+   Serial.begin(9600);                                              // serial initialization
+   lcd.begin(20,4);                                                 // LCD initialization
+   Wire.begin();                                                    // Wire initialization
+   RTC.begin();                                                     // RTC initialization
+   if (!RTC.isrunning())
+   {
+     RTC.adjust(DateTime(__DATE__, __TIME__));                      // date and time adjust as the PC computer date and time
+   }
+   
+// Arduino pins initalization
+  pinMode(O_WaterPumpRelayControl,OUTPUT);
+  
+// LCD initial messages
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print(str_msg_table[0]); 
+  lcd.setCursor(0,1);
+  lcd.print(str_msg_table[1]); 
+  lcd.setCursor(0,3);
+  lcd.print(str_msg_table[2]);
+  
+  delay(InitDelay);                                                // initialization delay
+
+  lcd.clear();
+  lcd.setCursor(0,1);
+  lcd.print(str_msg_table[3]);
+  
+  digitalWrite(O_WaterPumpRelayControl, LOW);                      // Turn OFF any power to the Relay channels
+}
+
+
+// --------------------------------------------------------------------------------------------------------------------------
+// Control
+// --------------------------------------------------------------------------------------------------------------------------
+void loop()
+{
+  // RTC parameters definition
+    DateTime myRTC = RTC.now();
+    int H = myRTC.hour();
+    int M = myRTC.minute();
+    int S = myRTC.second();
+	
+  // reads the sensors
+    FlowSensorValue = analogRead(I_FlowSensor);
+	
+	  // Debugging Messages 1 - Start 
+        Serial.println("Flow Rate");
+        Serial.println(FlowSensorValue);
+        Serial.println( );
+	  // Debugging Messages 1 - End 
+
+  // Pump is OFF, hence Flow is Zero
+  if (O_WaterPumpRelayControl == LOW && FlowSensorValue < FlowMinRate)
+  {
+   lcd.clear();
+   RightHour();
+   lcd.setCursor(0,3);
+   lcd.print(str_msg_table[6]); 
+   
+	  // Debugging Messages 2 - Start 
+        Serial.println("Pump is OFF, hence Flow is Zero");
+        Serial.println(FlowSensorValue);
+        Serial.println( );
+	  // Debugging Messages 2 - End    
+
+  }
+
+  // Pump is ON, But Flow is Zero : ALERT - Pump Dry Run
+  if (O_WaterPumpRelayControl == HIGH && FlowSensorValue < FlowMinRate)
+  {
+   lcd.clear();
+   RightHour();
+   lcd.setCursor(0,3);
+   lcd.print(str_msg_table[7]); 
+   
+	  // Debugging Messages 3 - Start 
+        Serial.println("Pump is ON, But Flow is Zero : ALERT - Pump Dry Run");
+        Serial.println(FlowSensorValue);
+        Serial.println( );
+	  // Debugging Messages 3 - End    
+  }
+
+  // Pump is ON, Flow is within range : Normal Operation
+  if (O_WaterPumpRelayControl == HIGH && FlowSensorValue > FlowMinRate)
+  {
+   lcd.clear();
+   RightHour();
+   lcd.setCursor(0,3);
+   lcd.print(str_msg_table[5]); 
+   
+	  // Debugging Messages 4 - Start 
+        Serial.println("Pump is ON, Flow is within range");
+        Serial.println(FlowSensorValue);
+        Serial.println( );
+	  // Debugging Messages 4 - End    
+  }
+
+  if(((H == str_sch_table[0] && M == str_sch_table[3]) || 
+      (H == str_sch_table[1] && M == str_sch_table[3]) || 
+	  (H == str_sch_table[2] && M == str_sch_table[3])
+	 ) && 
+	 O_WaterPumpRelayControl == LOW
+	)
+  {
+    lcd.clear();
+    RightHour();
+    lcd.setCursor(0,3);
+    lcd.print(string_table[8]);
+
+	Serial.println("Starting Pump");
+	Serial.println( );
+    digitalWrite(O_WaterPumpRelayControl,HIGH);                             // Turn the Pump ON
+    delay(120000);                                                          // Wait for 2 Min.
+	
+      // Debugging Messages 5 - Start 
+        Serial.println("Pump Started");
+        FlowSensorValue = analogRead(I_FlowSensor);
+        Serial.println(FlowSensorValue);
+        Serial.println( );
+	  // Debugging Messages 5 - End    
+  }
+  
+  if(((H == str_sch_table[0] && M >= str_sch_table[4]) || 
+      (H == str_sch_table[1] && M >= str_sch_table[4]) || 
+	  (H == str_sch_table[2] && M >= str_sch_table[4])
+	 ) && 
+	 O_WaterPumpRelayControl == HIGH
+	)
+  {
+    lcd.clear();
+    RightHour();
+    lcd.setCursor(0,3);
+    lcd.print(string_table[9]);
+
+	Serial.println("Stopping Pump");
+	Serial.println( );
+    digitalWrite(O_WaterPumpRelayControl,LOW);                              // Turn the Pump OFF
+    delay(60000);                                                           // Wait for 1 Min.
+	
+	  // Debugging Messages 6 - Start 
+        Serial.println("Pump Stopped");
+        FlowSensorValue = analogRead(I_FlowSensor);
+        Serial.println(FlowSensorValue);
+        Serial.println( );
+	  // Debugging Messages 6 - End    
+  }  
+}
