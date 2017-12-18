@@ -202,4 +202,50 @@ void loop()
         Serial.println( );
 	  // Debugging Messages 6 - End    
   }  
+}                                                                          // End of void loop
+
+
+// Real Time Clock Function
+void RightHour()
+{
+  DateTime Now = RTC.now();
+  String clock_date = "  Date: ";
+  String clock_hour = "  Time: ";
+  
+  int _day = Now.day();
+  int _month = Now.month();
+  int _year = Now.year();
+  
+  clock_date += fixZero(_month);
+  clock_date += "/";
+  clock_date += fixZero(_day);
+  clock_date += "/";
+  clock_date += _year;
+  
+  int _hour = Now.hour();
+  int _minute = Now.minute();
+  int _second = Now.second();
+  
+  clock_hour += fixZero(_hour);
+  clock_hour += ":";
+  clock_hour += fixZero(_minute);
+  clock_hour += ":";
+  clock_hour += fixZero(_second);
+  
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(clock_date);
+  lcd.setCursor(0, 1);
+  lcd.print(clock_hour);
+  
+  delay(1000);
+}
+
+
+String fixZero(int i)
+{
+  String ret;
+  if (i < 10) ret += "0";
+  ret += i;
+  return ret;
 }
