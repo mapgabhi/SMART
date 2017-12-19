@@ -1,0 +1,349 @@
+/* 
+   Project: GSM based SMART Irrigation Controller
+   Description: Irrigation Controller with Built-In Intelligence
+    -- Senses Environment - Temp, Humidity, Rain
+    -- Senses Control Variables - Electricity Power Availability, Pump Status (ON/OFF), Flow Rate, Schedule
+    -- Data Storage & Reporting
+   Author: MuktaSoft AgriTech
+   Date: 18 DEC 2017
+*/
+
+// --------------------------------------------------------------------------------------------------------------------------
+// Definition - Parameter, Variables, Libraries
+// --------------------------------------------------------------------------------------------------------------------------
+// Include Libraries
+  #include <Wire.h>                              // https://github.com/arduino/Arduino/tree/master/hardware/arduino/avr/libraries/Wire
+  #include <LiquidCrystal_I2C.h>                 // https://github.com/fdebrabander/Arduino-LiquidCrystal-I2C-library.git
+  #include <RTClib.h>                            // https://github.com/adafruit/RTClib.git
+  #include <GSM.h>                               // Built-In
+  
+// Arduino Pins definition
+  int I_FlowSensor = 0;                          // Input from Flow Sensor - A0 (GPIO 14)
+  int O_WaterPumpRelayControl = 7;               // Output for Water Pump Relay Control - 7 (GPIO 07)
+  int O_Light01RelayControl = 4;                 // Output for Light 01 Relay Control - 4 (GPIO 04)
+  int O_Light02RelayControl = 12;                // Output for Light 02 Relay Control - 12 (GPIO 12)
+  int O_Light03RelayControl = 13;                // Output for Light 03 Relay Control - 13 (GPIO 13)
+  
+// Variables
+  int FlowSensorValue;                           // Stores the flow sensor values
+  int FlowMinRate=100;                           // Flow Sensor Min. Flow Rate
+  int FlowMaxRate=1000;                          // Flow Sensor Max. Flow Rate
+  int DryRunWaitPeriod=60000;                    // Pump Dry Run Delay - 60 Sec.
+  int InitDelay=3600;                            // Initialization Delay - 60 Sec.
+  int PumpONInitDelay=60000;                     // Pump ON Init Delay - 01 Min.  
+  int PumpOFFInitDelay=30000;                    // Pump OFF Init Delay - 30 Sec.    
+  int PumpONTime=300000;                         // Pump ON Time - 05 Min.
+  
+  String IMEI = "";                              // Modem IMEI Number
+  String MasterCellNum = "9167044749";           // Master Cellphone Number 
+  //String MasterCellNum = "9224631963";         // Master Cellphone Number 
+
+  String txtMsg = "";
+  
+// System Messages Static Table
+const char *str_msg_table[] =
+{   
+  " MuktaSoft AgriTech ",                        // System Message - 0
+  "     MuktaSynchan   ",                        // System Message - 1   
+  "    Please wait!    ",                        // System Message - 2
+  "   Mode: Automatic  ",                        // System Message - 3
+  "     Mode: Manual   ",                        // System Message - 4
+  "     Pump is ON     ",                        // System Message - 5
+  "     Pump is OFF    ",                        // System Message - 6
+  "ALERT: Pump Dry Run ",                        // System Message - 7 
+  "   Starting Pump    ",                        // System Message - 8
+  "   Stopping Pump    ",                        // System Message - 9
+  "Main Power Available",                        // System Message - 10
+  " Main Power Failure ",                        // System Message - 11
+  "ALERT: Pump Dry Run - Shutting Down",         // System Message - 12
+  "Pump is ON - Normal Operation"                // System Message - 13  
+};
+
+// System Schedule Static Table
+const char *str_sch_table[] =
+{   
+  "06",    // 06 Hr
+  "12",    // 12 Hr   
+  "18",    // 18 Hr
+  "00",    // 00 Min.
+  "10"     // 10 Min.  
+};
+
+// Objects Definition
+   RTC_DS1307 RTC;
+   LiquidCrystal_I2C lcd(0x27, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);   // LiquidCrystal_I2C lcd(0x27,20,4);
+   GSMModem modem;                                                  // modem verification object
+   GSM gsmAccess;
+   GSMScanner scannerNetworks;
+   GSM_SMS sms;
+
+// --------------------------------------------------------------------------------------------------------------------------
+// System Initialization   
+// --------------------------------------------------------------------------------------------------------------------------
+void setup(){
+   Serial.begin(9600);                                              // serial initialization
+   lcd.begin(20,4);                                                 // LCD initialization
+   Wire.begin();                                                    // Wire initialization
+   RTC.begin();                                                     // RTC initialization
+   
+   if (!RTC.initialized())
+   {
+    Serial.println("System Init Error: RTC is NOT running!");
+   }
+	
+   if (!RTC.isrunning())
+   {
+     RTC.adjust(DateTime(__DATE__, __TIME__));                      // date and time adjust as the PC computer date and time
+   }
+   
+// Arduino pins initalization
+  pinMode(O_WaterPumpRelayControl, OUTPUT);
+  
+// LCD initial messages
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print(str_msg_table[0]); 
+  lcd.setCursor(0,1);
+  lcd.print(str_msg_table[1]); 
+  lcd.setCursor(0,3);
+  lcd.print(str_msg_table[2]);
+  
+  GSM_Modem_Test();                                                // Test GSM Modem
+  GSM_Scan_Network();                                              // Scan GSM Network
+  
+  delay(InitDelay);                                                // initialization delay
+
+  lcd.clear();
+  lcd.setCursor(0,1);
+  lcd.print(str_msg_table[3]);
+  
+  digitalWrite(O_WaterPumpRelayControl, LOW);                      // Turn OFF any power to the Relay channels
+}
+
+
+// --------------------------------------------------------------------------------------------------------------------------
+// Control
+// --------------------------------------------------------------------------------------------------------------------------
+void loop()
+{
+  // RTC parameters definition
+    DateTime myRTC = RTC.now();
+    int H = myRTC.hour();
+    int M = myRTC.minute();
+    int S = myRTC.second();
+
+  // reads the sensors
+    FlowSensorValue = analogRead(I_FlowSensor);
+
+  if(((H == str_sch_table[0] && M == str_sch_table[3]) || 
+      (H == str_sch_table[1] && M == str_sch_table[3]) || 
+	  (H == str_sch_table[2] && M == str_sch_table[3])
+	 ) && 
+	 O_WaterPumpRelayControl == LOW
+	 // &&
+	 // Check if Mains Power is available
+	)
+  {
+    lcd.clear();
+    RightHour();
+    lcd.setCursor(0,3);
+    lcd.print(str_msg_table[8]);
+
+	Serial.println("Starting Pump");
+	Serial.println( );
+    digitalWrite(O_WaterPumpRelayControl,HIGH);                             // Turn the Pump ON
+    Serial.println("Pump Started successfully.");	
+    delay(PumpONInitDelay);                                                 // Wait for 1 Min.
+	
+    FlowSensorValue = analogRead(I_FlowSensor);
+    Serial.println("Flow Rate: " + FlowSensorValue);
+
+    // Pump is ON, But Flow is Zero : ALERT - Pump Dry Run
+    if (O_WaterPumpRelayControl == HIGH && FlowSensorValue < FlowMinRate)
+    {
+     lcd.clear();
+     RightHour();
+     lcd.setCursor(0,3);
+     lcd.print(str_msg_table[7]);
+	 Serial.println("ALERT: Pump Dry Run - Shutting Down.");	
+	 digitalWrite(O_WaterPumpRelayControl, LOW);
+	 txtMsg = str_msg_table[12];
+	 SendSMS();
+    }
+    
+    // Pump is ON, Flow is within range : Normal Operation
+    if (O_WaterPumpRelayControl == HIGH && FlowSensorValue > FlowMinRate)
+    {
+     lcd.clear();
+     RightHour();
+     lcd.setCursor(0,3);
+     lcd.print(str_msg_table[5]);
+	 txtMsg = str_msg_table[12];
+	 SendSMS();
+    }
+	
+    Serial.println( );
+  }
+  
+  if(((H == str_sch_table[0] && M >= str_sch_table[4]) || 
+      (H == str_sch_table[1] && M >= str_sch_table[4]) || 
+	  (H == str_sch_table[2] && M >= str_sch_table[4])
+	 ) && 
+	 O_WaterPumpRelayControl == HIGH
+	)
+  {
+    lcd.clear();
+    RightHour();
+    lcd.setCursor(0,3);
+    lcd.print(str_msg_table[9]);
+
+	Serial.println("Stopping Pump");
+	Serial.println( );
+    digitalWrite(O_WaterPumpRelayControl, LOW);                          // Turn the Pump OFF
+    delay(PumpOFFInitDelay);                                             // Wait for 1 Min.
+	
+    Serial.println("Pump Stopped");
+    FlowSensorValue = analogRead(I_FlowSensor);
+    Serial.println(FlowSensorValue);
+    Serial.println( );
+  }  
+}                                                                        // End of void loop
+
+// --------------------------------------------------------------------------------------------------------------------------
+// Function to implement Real Time Clock
+// --------------------------------------------------------------------------------------------------------------------------
+void RightHour()
+{
+  DateTime Now = RTC.now();
+  String clock_date = "  Date: ";
+  String clock_hour = "  Time: ";
+  
+  int _day = Now.day();
+  int _month = Now.month();
+  int _year = Now.year();
+  
+  clock_date += fixZero(_month);
+  clock_date += "/";
+  clock_date += fixZero(_day);
+  clock_date += "/";
+  clock_date += _year;
+  
+  int _hour = Now.hour();
+  int _minute = Now.minute();
+  int _second = Now.second();
+  
+  clock_hour += fixZero(_hour);
+  clock_hour += ":";
+  clock_hour += fixZero(_minute);
+  clock_hour += ":";
+  clock_hour += fixZero(_second);
+  
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(clock_date);
+  lcd.setCursor(0, 1);
+  lcd.print(clock_hour);
+  
+  delay(1000);
+}
+
+// --------------------------------------------------------------------------------------------------------------------------
+// Function to Fix Zero in Date / Time Values 
+// --------------------------------------------------------------------------------------------------------------------------
+String fixZero(int i)
+{
+  String ret;
+  if (i < 10) ret += "0";
+  ret += i;
+  return ret;
+}
+
+// --------------------------------------------------------------------------------------------------------------------------
+// Function to Test GSM Modem 
+// --------------------------------------------------------------------------------------------------------------------------
+void GSM_Modem_Test()
+{
+  Serial.print("Starting GSM modem test -");
+  if (modem.begin()) 
+  { Serial.println("modem.begin() succeeded"); } 
+  else 
+  { Serial.println("System Init Error: Failed to Initiate GSM Modem."); }
+  
+  delay(1000);
+  
+  void loop() 
+  {
+    Serial.print("Get GMS Modem IMEI Number.");
+    IMEI = modem.getIMEI();
+    
+    if (IMEI != NULL) 
+	{
+      Serial.println("GMS Modem's IMEI: " + IMEI);
+      Serial.print("Resetting GSM Modem -");
+      modem.begin();
+      if (modem.getIMEI() != NULL) 
+	  { Serial.println("GSM Modem is functoning properly."); } 
+	  else 
+	  { Serial.println("System Init Error: GSM Modem is not functioning properly."); }
+    } 
+	else 
+	{ Serial.println("System Init Error: Could not get IMEI."); }
+  while (true);
+  }
+}
+
+// --------------------------------------------------------------------------------------------------------------------------
+// Function to scan GSM Network
+// --------------------------------------------------------------------------------------------------------------------------
+void GSM_Scan_Network()
+{
+  Serial.println("Scanning GSM Network.");
+  scannerNetworks.begin();
+
+  boolean notConnected = true;
+
+  while (notConnected) 
+  {
+    if (gsmAccess.begin() == GSM_READY) 
+	{ notConnected = false; } 
+	else 
+	{
+      Serial.println("System Init Error: Could not to GSM network.");
+      delay(1000);
+    }
+  }
+
+  Serial.println("Scanning available GSM networks. May take some seconds.");
+  Serial.println(scannerNetworks.readNetworks());
+
+  Serial.print("Current carrier: ");
+  Serial.println(scannerNetworks.getCurrentCarrier());
+
+  // returns strength and ber
+  // signal strength in 0-31 scale. 31 means power > 51dBm
+  // BER is the Bit Error Rate. 0-7 scale. 99=not detectable
+  Serial.print("Signal Strength: ");
+  Serial.print(scannerNetworks.getSignalStrength());
+  Serial.println(" [0-31]");
+  delay(1000);
+}
+
+// --------------------------------------------------------------------------------------------------------------------------
+// Function to send SMS
+// --------------------------------------------------------------------------------------------------------------------------
+void SendSMS()
+{
+  Serial.println("Sending SMS to " + MasterCellNum);
+  Serial.println("'");
+  Serial.print(txtMsg);
+  Serial.print("'");
+  Serial.println();
+  
+  sms.beginSMS(MasterCellNum);
+  sms.print(txtMsg);
+  sms.endSMS();
+  
+  Serial.println("\nSMS Sent successfully.\n");
+  delay(1000);
+}
+
